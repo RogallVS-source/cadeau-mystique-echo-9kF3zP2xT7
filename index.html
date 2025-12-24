@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>Cadeau mystique à gratter</title>
+  <style>
+    html, body {
+      margin: 0;
+      height: 100%;
+      background: #0b0b12;
+      touch-action: none; /* évite le scroll pendant le grattage */
+      overscroll-behavior: none;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+    }
+
+    .wrap {
+      height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 14px;
+      box-sizing: border-box;
+    }
+
+    .card {
+      width: min(92vw, 420px);
+      aspect-ratio: 1 / 1;
+      border-radius: 18px;
+      overflow: hidden;
+      position: relative;
+      box-shadow: 0 20px 60px rgba(0,0,0,.55);
+      background: #111;
+    }
+
+    .reveal {
+      position: absolute;
+      inset: 0;
+      background: center / cover no-repeat url("reveal.png");
+      filter: saturate(1.05) contrast(1.05);
+      transform: translateZ(0);
+    }
+
+    canvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      display: block;
+      transform: translateZ(0);
+    }
+
+    .hint {
+      position: absolute;
+      left: 12px;
+      right: 12px;
+      bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      color: rgba(255,255,255,.9);
+      background: rgba(0,0,0,.35);
+      backdrop-filter: blur(8px);
+      font-size: 14px;
+      line-height: 1.25;
+      pointer-events: none;
+      text-align: center;
+    }
+
+    .btns {
+      margin-top: 14px;
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 0;
+      border-radius: 14px;
+      padding: 10px 14px;
+      color: #fff;
+      background: rgba(255,255,255,.10);
+      cursor: pointer;
+      font-size: 14px;
+    }
+    button:active { transform: scale(0.98); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card" id="card">
+      <div class="reveal" aria-hidden="true"></div>
+      <canvas id="scratch"></canvas>
+      <div class="hint" id="hint">Gratte avec ton doigt pour déballer ✨</div>
+    </div>
+
+    <div class="btns">
+      <button id="resetBtn">Ré-emballer</button>
+      <button id="fullBtn">Tout révéler</button>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById("scratch");
+    const ctx = canvas.getContext("2d", { willReadFrequently: false });
+    const card = document.getElementById("card");
+    const hint = document.getElementById("hint");
+    const resetBtn = document.getElementById("resetBtn");
+    const fullBtn = document.getElementById("fullBtn");
+
+    const WRAP_SRC = "wrap.png"; // papier cadeau mystique
+    const BRUSH_RADIUS = 26;     // taille du "grattage" (px sur canvas)
+    const FADE_HINT_AFTER = 35;  // après X coups de grattage, on cache l'indication
+
+    let wrapImg = new Image();
+    wrapImg.src = WRAP_SRC;
+
+    let scratching = false;
+    let strokes = 0;
+
+    function fitCanvasToCard() {
+      // Ajuste le canvas en pixels réels (retina)
+      const rect = card.getBoundingClientRect();
+      const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+
+      canvas.width = Math.round(rect.width * dpr);
+      canvas.height = Math.round(rect.height * dpr);
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // dessiner en CSS pixels
+      drawWrap();
+    }
+
+    function drawWrap() {
+      // Dessine l'image wrap en "cover"
+      const w = canvas.width / (window.devicePixelRatio || 1);
+      const h = canvas.height / (window.devicePixelRatio || 1);
+
+      ctx.globalCompositeOperation = "source-over";
+      ctx.clearRect(0, 0, w, h);
+
+      if (!wrapImg.complete) return;
+
+      const iw = wrapImg.naturalWidth;
+      const ih = wrapImg.naturalHeight;
+
+      const scale = Math.max(w / iw, h / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      const dx = (w - dw) / 2;
+      const dy = (h - dh) / 2;
+
+      ctx.drawImage(wrapImg, dx, dy, dw, dh);
+
+      // Petit voile mystique léger (optionnel)
+      const g = ctx.createRadialGradient(w*0.5, h*0.35, 20, w*0.5, h*0.5, Math.max(w,h)*0.7);
+      g.addColorStop(0, "rgba(255,255,255,0.06)");
+      g.addColorStop(1, "rgba(0,0,0,0.00)");
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, w, h);
+
+      strokes = 0;
+      hint.style.opacity = 1;
+    }
+
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX, clientY;
+
+      if (e.touches && e.touches[0]) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      } else {
+        clientX = e.clientX;
+        clientY = e.clientY;
+      }
+
+      const x = clientX - rect.left;
+      const y = clientY - rect.top;
+      return { x, y };
+    }
+
+    function scratchAt(x, y) {
+      const w = canvas.width / (window.devicePixelRatio || 1);
+      const h = canvas.height / (window.devicePixelRatio || 1);
+
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.beginPath();
+      ctx.arc(x, y, BRUSH_RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      strokes++;
+      if (strokes > FADE_HINT_AFTER) hint.style.opacity = 0;
+    }
+
+    function start(e) {
+      e.preventDefault();
+      scratching = true;
+      const {x,y} = getPos(e);
+      scratchAt(x,y);
+    }
+
+    function move(e) {
+      if (!scratching) return;
+      e.preventDefault();
+      const {x,y} = getPos(e);
+      scratchAt(x,y);
+    }
+
+    function end(e) {
+      scratching = false;
+    }
+
+    // Touch (mobile)
+    canvas.addEventListener("touchstart", start, { passive: false });
+    canvas.addEventListener("touchmove", move, { passive: false });
+    canvas.addEventListener("touchend", end, { passive: false });
+
+    // Mouse (PC, au cas où)
+    canvas.addEventListener("mousedown", start);
+    window.addEventListener("mousemove", move);
+    window.addEventListener("mouseup", end);
+
+    resetBtn.addEventListener("click", () => drawWrap());
+    fullBtn.addEventListener("click", () => {
+      const w = canvas.width / (window.devicePixelRatio || 1);
+      const h = canvas.height / (window.devicePixelRatio || 1);
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.fillRect(0, 0, w, h);
+      hint.style.opacity = 0;
+    });
+
+    wrapImg.onload = () => fitCanvasToCard();
+    window.addEventListener("resize", fitCanvasToCard);
+    window.addEventListener("orientationchange", fitCanvasToCard);
+
+    // Au cas où l'image est déjà en cache
+    if (wrapImg.complete) fitCanvasToCard();
+  </script>
+</body>
+</html>
